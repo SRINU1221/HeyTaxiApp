@@ -3,6 +3,7 @@ package com.heytaxi.rideservice.service;
 import com.heytaxi.rideservice.client.NotificationClient;
 import com.heytaxi.rideservice.client.PaymentClient;
 import com.heytaxi.rideservice.client.RazorpayClient;
+import com.heytaxi.rideservice.client.DriverClient;
 import com.heytaxi.rideservice.dto.RideDto;
 import com.heytaxi.rideservice.entity.Ride;
 import com.heytaxi.rideservice.repository.RideRepository;
@@ -26,6 +27,7 @@ public class RideService {
     private final PaymentClient paymentClient;
     private final NotificationClient notificationClient;
     private final RazorpayClient razorpayClient;
+    private final DriverClient driverClient;
     private final RedisTemplate<String, String> redisTemplate;
 
     private static final BigDecimal COMMISSION = new BigDecimal("2.00"); // ₹2 fixed HeyTaxi fee
@@ -233,6 +235,13 @@ public class RideService {
             ));
         } catch (Exception e) {
             log.warn("Failed to create payment record for ride {}: {}", rideId, e.getMessage());
+        }
+
+        // Update driver stats
+        try {
+            driverClient.updateStats(driverId, driverEarnings);
+        } catch (Exception e) {
+            log.warn("Failed to update driver stats for driver {}: {}", driverId, e.getMessage());
         }
 
         return toRideResponse(saved, false);

@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @RestController
@@ -57,6 +58,13 @@ public class DriverController {
             @RequestParam Driver.VehicleType vehicleType) {
         return ResponseEntity.ok(DriverDto.ApiResponse.success("Nearby drivers",
                 driverService.getNearbyDrivers(lat, lng, vehicleType)));
+    }
+
+    // Internal endpoint for ride-service to update driver stats
+    @PostMapping("/internal/{userId}/stats")
+    public ResponseEntity<Void> updateStats(@PathVariable Long userId, @RequestParam BigDecimal earnings) {
+        driverService.updateDriverStats(userId, earnings);
+        return ResponseEntity.ok().build();
     }
 
     // Admin endpoints

@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Service
@@ -27,6 +28,7 @@ public class DriverService {
                 .vehicleType(req.getVehicleType()).vehicleName(req.getVehicleName())
                 .vehicleNumber(req.getVehicleNumber().toUpperCase())
                 .vehicleColor(req.getVehicleColor()).licenseNumber(req.getLicenseNumber())
+                .isVerified(true)  // Auto-verify on registration — admin can revoke if needed
                 .build();
         return toResponse(driverRepository.save(driver));
     }
@@ -40,9 +42,19 @@ public class DriverService {
     public DriverDto.DriverResponse updateStatus(Long userId, Driver.DriverStatus status) {
         Driver driver = driverRepository.findByUserId(userId)
                 .orElseThrow(() -> new RuntimeException("Driver not found"));
-        if (!driver.getIsVerified()) throw new RuntimeException("Account not verified yet");
+        // isVerified check removed — drivers are auto-verified on registration
         driver.setStatus(status);
         return toResponse(driverRepository.save(driver));
+    }
+
+    @Transactional
+    public void updateDriverStats(Long userId, BigDecimal earnings) {
+        driverRepository.findByUserId(userId).ifPresent(driver -> {
+            driver.setTotalRides(driver.getTotalRides() + 1);
+            driver.setTotalEarnings(driver.getTotalEarnings().add(earnings));
+            driver.setStatus(Driver.DriverStatus.ONLINE); // go back to online after ride
+            driverRepository.save(driver);
+        });
     }
 
     @Transactional

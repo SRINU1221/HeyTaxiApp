@@ -19,18 +19,21 @@ api.interceptors.response.use((response) => response, async (error) => {
   if (error.response?.status === 401 && !original._retry) {
     original._retry = true;
     try {
-      const refreshToken = localStorage.getItem('refreshToken');
-      if (!refreshToken) throw new Error('No refresh token');
-      const res = await axios.post(`${API_BASE_URL}/auth/refresh-token`, { refreshToken });
-      const { accessToken } = res.data.data;
-      localStorage.setItem('accessToken', accessToken);
-      original.headers.Authorization = `Bearer ${accessToken}`;
-      return api(original);
+      // Refresh token is in an HttpOnly cookie — just call the endpoint with credentials
+      const res = await axios.post(`${API_BASE_URL}/auth/refresh-token`, {}, { withCredentials: true });
+      if (res.data?.data?.accessToken) {
+        const { accessToken } = res.data.data;
+        localStorage.setItem('accessToken', accessToken);
+        original.headers.Authorization = `Bearer ${accessToken}`;
+        return api(original);
+      }
     } catch {
-      localStorage.clear();
-      window.location.href = '/auth';
-      return Promise.reject(error);
+      // Refresh failed — clear and redirect to login
     }
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('user');
+    localStorage.removeItem('role');
+    window.location.href = '/auth';
   }
   return Promise.reject(error);
 });
@@ -38,22 +41,24 @@ api.interceptors.response.use((response) => response, async (error) => {
 export const authAPI = {
   checkUser: (email) => api.get(`/auth/check-user?email=${encodeURIComponent(email)}`),
   sendOtp: (email) => api.post('/auth/send-otp', { email }),
-  verifyOtp: (email, otp) => api.post('/auth/verify-otp', { email, otp }),
+  verifyOtp: (email, otp) => api.post('/auth/verify-otp', { email, otp }, { withCredentials: true }),
   register: (data) => api.post('/auth/register', data),
-  refreshToken: (refreshToken) => api.post('/auth/refresh-token', { refreshToken }),
-  logout: () => api.post('/auth/logout'),
+  refreshToken: () => api.post('/auth/refresh-token', {}, { withCredentials: true }),
+  logout: () => api.post('/auth/logout', {}, { withCredentials: true }),
 };
 
 export const rideAPI = {
   requestRide: (data) => api.post('/rides/request', data),
   getCurrentRide: () => api.get('/rides/current'),
   cancelRide: (rideId, reason) => api.post(`/rides/${rideId}/cancel`, { reason }),
-  rateRide: (rideId, rating, comment) => api.post(`/rides/${rideId}/rate`, { rating, comment }),
-  getRiderHistory: () => api.get('/rides/rider/history'),
-  getDriverHistory: () => api.get('/rides/driver/history'),
+  rateRide: (rideId, rating, feedback) => api.post(`/rides/${rideId}/rate`, { rating, feedback }),
+  getRiderHistory: () => api.get('/rides/my-rides'),
+  getDriverHistory: () => api.get('/rides/driver-rides'),
   acceptRide: (rideId) => api.post(`/rides/${rideId}/accept`),
-  startRide: (rideId) => api.post(`/rides/${rideId}/start`),
+  startRide: (rideId, otp) => api.post(`/rides/${rideId}/start`, { otp }),
   completeRide: (rideId) => api.post(`/rides/${rideId}/complete`),
+  getAvailableRides: (vehicleType) => api.get(`/rides/available${vehicleType ? `?vehicleType=${vehicleType}` : ''}`),
+  getDriverCurrentRide: () => api.get('/rides/driver-current'),
   getAdminStats: () => api.get('/rides/admin/stats'),
 };
 
