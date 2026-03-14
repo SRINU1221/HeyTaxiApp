@@ -1,0 +1,41 @@
+# ─── SECRETS (NEVER COMMIT) ───────────────────────────────────
+.env
+*.env.local
+
+# ─── JAVA BUILD ───────────────────────────────────────────────
+**/target/
+*.class
+*.jar
+*.war
+*.ear
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# ─── FRONTEND BUILD ───────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ─── IDE ──────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ─── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── LOGS ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── DOCKER ───────────────────────────────────────────────────
+docker-compose.override.yml

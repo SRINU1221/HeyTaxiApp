@@ -1,0 +1,98 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "http://localhost:5173"
+              - "http://frontend:80"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+      routes:
+        # ✅ Auth Service - PUBLIC routes (no JWT required)
+        # logout is here too — it clears the cookie, no need for JWT validation
+        - id: auth-service-public
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/auth/**
+
+        # User Service
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - AuthenticationFilter
+
+        # Driver Service
+        - id: driver-service
+          uri: lb://driver-service
+          predicates:
+            - Path=/api/drivers/**
+          filters:
+            - AuthenticationFilter
+
+        # Ride Service
+        - id: ride-service
+          uri: lb://ride-service
+          predicates:
+            - Path=/api/rides/**
+          filters:
+            - AuthenticationFilter
+
+        # Fare Service
+        - id: fare-service
+          uri: lb://fare-service
+          predicates:
+            - Path=/api/fares/**
+          filters:
+            - AuthenticationFilter
+
+        # Payment Service
+        - id: payment-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/payments/**
+          filters:
+            - AuthenticationFilter
+
+        # Notification Service
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/notifications/**
+          filters:
+            - AuthenticationFilter
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+    ip-address: 127.0.0.1
+
+jwt:
+  secret: ${JWT_SECRET:heytaxi-super-secret-jwt-key-2026-production-ready-key}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO

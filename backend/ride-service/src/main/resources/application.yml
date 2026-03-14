@@ -1,0 +1,47 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: ride-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/ride_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:Korra@2026}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+
+jwt:
+  secret: ${JWT_SECRET:heytaxi-super-secret-jwt-key-2026-production-ready-key}
+
+# ✅ Razorpay test credentials — replace with your actual test keys
+razorpay:
+  key-id: ${RAZORPAY_KEY_ID:rzp_test_SQGpOF65NpB3Eh}
+  key-secret: ${RAZORPAY_KEY_SECRET:YbfXMPVWTSHtTjQ461ch2683}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+    ip-address: 127.0.0.1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+feign:
+  circuitbreaker:
+    enabled: true

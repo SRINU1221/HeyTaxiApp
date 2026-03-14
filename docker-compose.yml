@@ -1,0 +1,240 @@
+version: '3.8'
+
+services:
+
+  # ─── INFRASTRUCTURE ───────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: heytaxi-postgres
+    environment:
+      POSTGRES_USER: heytaxi
+      POSTGRES_PASSWORD: Korra@2026
+      POSTGRES_MULTIPLE_DATABASES: auth_db,user_db,driver_db,ride_db,fare_db,payment_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh
+    networks:
+      - heytaxi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U heytaxi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: heytaxi-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - heytaxi-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─── SERVICE DISCOVERY ────────────────────────────────────────
+  eureka-server:
+    build: ./backend/eureka-server
+    container_name: heytaxi-eureka
+    ports:
+      - "8761:8761"
+    networks:
+      - heytaxi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ─── API GATEWAY ──────────────────────────────────────────────
+  api-gateway:
+    build: ./backend/api-gateway
+    container_name: heytaxi-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── AUTH SERVICE ─────────────────────────────────────────────
+  auth-service:
+    build: ./backend/auth-service
+    container_name: heytaxi-auth
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/auth_db
+      - SPRING_DATASOURCE_USERNAME=heytaxi
+      - SPRING_DATASOURCE_PASSWORD=Korra@2026
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - MAIL_USERNAME=${GMAIL_USERNAME}
+      - MAIL_PASSWORD=${GMAIL_APP_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── USER SERVICE ─────────────────────────────────────────────
+  user-service:
+    build: ./backend/user-service
+    container_name: heytaxi-user
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/user_db
+      - SPRING_DATASOURCE_USERNAME=heytaxi
+      - SPRING_DATASOURCE_PASSWORD=Korra@2026
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── DRIVER SERVICE ───────────────────────────────────────────
+  driver-service:
+    build: ./backend/driver-service
+    container_name: heytaxi-driver
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/driver_db
+      - SPRING_DATASOURCE_USERNAME=heytaxi
+      - SPRING_DATASOURCE_PASSWORD=Korra@2026
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── NOTIFICATION SERVICE ─────────────────────────────────────
+  notification-service:
+    build: ./backend/notification-service
+    container_name: heytaxi-notification
+    ports:
+      - "8086:8086"
+    environment:
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - MAIL_USERNAME=${GMAIL_USERNAME}
+      - MAIL_PASSWORD=${GMAIL_APP_PASSWORD}
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── FARE SERVICE ─────────────────────────────────────────────
+  fare-service:
+    build: ./backend/fare-service
+    container_name: heytaxi-fare
+    ports:
+      - "8085:8085"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/fare_db
+      - SPRING_DATASOURCE_USERNAME=heytaxi
+      - SPRING_DATASOURCE_PASSWORD=Korra@2026
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── RIDE SERVICE ─────────────────────────────────────────────
+  ride-service:
+    build: ./backend/ride-service
+    container_name: heytaxi-ride
+    ports:
+      - "8084:8084"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/ride_db
+      - SPRING_DATASOURCE_USERNAME=heytaxi
+      - SPRING_DATASOURCE_PASSWORD=Korra@2026
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── PAYMENT SERVICE ──────────────────────────────────────────
+  payment-service:
+    build: ./backend/payment-service
+    container_name: heytaxi-payment
+    ports:
+      - "8087:8087"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/payment_db
+      - SPRING_DATASOURCE_USERNAME=heytaxi
+      - SPRING_DATASOURCE_PASSWORD=Korra@2026
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - heytaxi-network
+
+  # ─── FRONTEND ─────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: heytaxi-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - heytaxi-network
+
+networks:
+  heytaxi-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
