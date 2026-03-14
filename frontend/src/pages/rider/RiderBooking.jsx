@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { requestRide, cancelRide, getCurrentRide, setCurrentRide } from '../../store/slices/rideSlice'
 import toast from 'react-hot-toast'
@@ -12,60 +12,25 @@ const VEHICLES = [
 
 const GOOGLE_MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY || ''
 
-// ✅ Load Google Maps once at module level — no callback, uses onload
-// function loadGoogleMaps(apiKey) {
-//   return new Promise((resolve, reject) => {
-//     if (window.google && window.google.maps && window.google.maps.places) {
-//       resolve()
-//       return
-//     }
-//     const existing = document.getElementById('google-maps-script')
-//     if (existing) {
-//       existing.addEventListener('load', resolve)
-//       existing.addEventListener('error', reject)
-//       return
-//     }
-//     const script = document.createElement('script')
-//     script.id = 'google-maps-script'
-//     script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`
-//     script.async = true
-//     script.onload = resolve
-//     script.onerror = reject
-//     document.head.appendChild(script)
-//   })
-// }
 function loadGoogleMaps(apiKey) {
   return new Promise((resolve, reject) => {
-
     const isReady = () =>
       typeof window !== 'undefined' &&
       typeof window.google?.maps?.Map === 'function' &&
       typeof window.google?.maps?.places?.Autocomplete === 'function'
 
-    if (isReady()) {
-      resolve()
-      return
-    }
+    if (isReady()) { resolve(); return }
 
-    const existingScript = document.getElementById("google-maps-script")
-
+    const existingScript = document.getElementById('google-maps-script')
     if (existingScript) {
-      const onLoad = () => {
-        const startedAt = Date.now()
-        const tick = () => {
-          if (isReady()) return resolve()
-          if (Date.now() - startedAt > 10000) return reject(new Error('Google Maps did not initialize'))
-          setTimeout(tick, 50)
-        }
-        tick()
-      }
-      existingScript.addEventListener('load', onLoad)
-      existingScript.addEventListener('error', () => reject(new Error('Failed to load Google Maps script')))
+      const tick = () => isReady() ? resolve() : setTimeout(tick, 50)
+      existingScript.addEventListener('load', () => setTimeout(tick, 50))
+      existingScript.addEventListener('error', () => reject(new Error('Failed to load Google Maps')))
       return
     }
 
-    const script = document.createElement("script")
-    script.id = "google-maps-script"
+    const script = document.createElement('script')
+    script.id = 'google-maps-script'
     script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`
     script.async = true
     script.defer = true
@@ -79,16 +44,17 @@ function loadGoogleMaps(apiKey) {
       tick()
     }
     script.onerror = () => reject(new Error('Failed to load Google Maps script'))
-
     document.head.appendChild(script)
   })
 }
+
+const ACTIVE_STATUSES = ['REQUESTED', 'ACCEPTED', 'DRIVER_ARRIVING', 'ONGOING']
 
 export default function RiderBooking() {
   const dispatch = useDispatch()
   const { loading, currentRide } = useSelector(s => s.ride)
 
-  const [step, setStep] = useState('location')
+  const [step, setStep] = useState('loading')  // 'loading' | 'location' | 'tracking' | 'completed'
   const [pickup, setPickup] = useState({ address: '', lat: null, lng: null })
   const [drop, setDrop] = useState({ address: '', lat: null, lng: null })
   const [selectedType, setSelectedType] = useState(null)
@@ -108,6 +74,30 @@ export default function RiderBooking() {
   const pollingRef = useRef(null)
   const autocompleteInitialized = useRef(false)
 
+  // ─── On mount: check if rider has an active ride ───────────────────────────
+  useEffect(() => {
+    const checkActiveRide = async () => {
+      try {
+        const res = await dispatch(getCurrentRide())
+        if (getCurrentRide.fulfilled.match(res) && res.payload?.success) {
+          const ride = res.payload.data
+          if (ACTIVE_STATUSES.includes(ride.status)) {
+            setStep('tracking')
+          } else if (ride.status === 'COMPLETED') {
+            setStep('completed')
+          } else {
+            setStep('location')
+          }
+        } else {
+          setStep('location')
+        }
+      } catch {
+        setStep('location')
+      }
+    }
+    checkActiveRide()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ─── Load Google Maps script ───────────────────────────────────────────────
   useEffect(() => {
     if (!GOOGLE_MAPS_KEY) return
@@ -118,15 +108,10 @@ export default function RiderBooking() {
 
   // ─── Init map + autocomplete ───────────────────────────────────────────────
   useEffect(() => {
-    if (!mapLoaded || autocompleteInitialized.current) return
+    if (!mapLoaded || autocompleteInitialized.current || step !== 'location') return
     autocompleteInitialized.current = true
 
-    // Init map
     if (mapRef.current) {
-      if (typeof window.google?.maps?.Map !== 'function') {
-        console.error('Google Maps not ready: window.google.maps.Map missing')
-        return
-      }
       mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
         center: { lat: 17.3850, lng: 78.4867 },
         zoom: 13,
@@ -141,7 +126,6 @@ export default function RiderBooking() {
       })
     }
 
-    // Pickup autocomplete
     if (pickupInputRef.current) {
       const ac = new window.google.maps.places.Autocomplete(pickupInputRef.current, {
         componentRestrictions: { country: 'in' },
@@ -161,7 +145,6 @@ export default function RiderBooking() {
       })
     }
 
-    // Drop autocomplete
     if (dropInputRef.current) {
       const ac = new window.google.maps.places.Autocomplete(dropInputRef.current, {
         componentRestrictions: { country: 'in' },
@@ -176,7 +159,7 @@ export default function RiderBooking() {
         if (mapInstanceRef.current) placeMarker(dropMarkerRef, { lat, lng }, '🏁')
       })
     }
-  }, [mapLoaded])
+  }, [mapLoaded, step])
 
   // ─── Draw route when both locations set ───────────────────────────────────
   useEffect(() => {
@@ -212,33 +195,38 @@ export default function RiderBooking() {
     }
   }, [pickup.lat, drop.lat])
 
-  // ─── Polling ───────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (currentRide && !['COMPLETED', 'CANCELLED'].includes(currentRide.status)) {
-      startPolling()
-    } else {
-      stopPolling()
-      if (currentRide?.status === 'COMPLETED') setStep('completed')
-      if (currentRide?.status === 'CANCELLED') { setStep('location'); toast.error('Ride cancelled') }
-    }
-    return () => stopPolling()
-  }, [currentRide?.status])
-
-  const startPolling = () => {
+  // ─── Polling for ride status updates ──────────────────────────────────────
+  const startPolling = useCallback(() => {
     if (pollingRef.current) return
     pollingRef.current = setInterval(async () => {
       const res = await dispatch(getCurrentRide())
       if (getCurrentRide.fulfilled.match(res) && res.payload?.success) {
         const ride = res.payload.data
-        if (ride.status === 'COMPLETED') { stopPolling(); setStep('completed'); toast.success('Ride completed! 🎉') }
-        if (ride.status === 'CANCELLED') { stopPolling(); setStep('location'); toast.error('Ride cancelled') }
+        if (ride.status === 'COMPLETED') {
+          stopPolling()
+          setStep('completed')
+          toast.success('Ride completed! 🎉')
+        } else if (ride.status === 'CANCELLED') {
+          stopPolling()
+          setStep('location')
+          toast.error('Ride was cancelled')
+        }
       }
     }, 5000)
-  }
+  }, [dispatch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
   }
+
+  useEffect(() => {
+    if (step === 'tracking' && currentRide && ACTIVE_STATUSES.includes(currentRide.status)) {
+      startPolling()
+    } else if (step !== 'tracking') {
+      stopPolling()
+    }
+    return () => stopPolling()
+  }, [step, currentRide?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const placeMarker = (markerRef, position, emoji) => {
     if (markerRef.current) markerRef.current.setMap(null)
@@ -273,6 +261,7 @@ export default function RiderBooking() {
 
     if (requestRide.fulfilled.match(result) && result.payload?.success) {
       toast.success('Ride requested! Finding drivers... 🚖')
+      autocompleteInitialized.current = false
       setStep('tracking')
     } else {
       toast.error(result.payload || 'Failed to book ride')
@@ -286,6 +275,7 @@ export default function RiderBooking() {
     setStep('location')
   }
 
+  // ─── Load Razorpay ────────────────────────────────────────────────────────
   useEffect(() => {
     if (document.getElementById('razorpay-script')) return
     const script = document.createElement('script')
@@ -299,7 +289,7 @@ export default function RiderBooking() {
     if (!currentRide?.razorpayOrderId) { toast.error('Payment order not found'); return }
     new window.Razorpay({
       key: import.meta.env.VITE_RAZORPAY_KEY_ID,
-      amount: Math.round(currentRide.actualFare * 100),
+      amount: Math.round((currentRide.actualFare || currentRide.estimatedFare) * 100),
       currency: 'INR',
       name: 'HeyTaxi',
       description: `Ride #${currentRide.id}`,
@@ -311,8 +301,12 @@ export default function RiderBooking() {
             razorpayOrderId: response.razorpay_order_id,
             razorpaySignature: response.razorpay_signature,
           })
-          if (res.data.success) { toast.success('Payment successful! 🎉'); dispatch(setCurrentRide(res.data.data)) }
-          else toast.error('Payment verification failed')
+          if (res.data.success) {
+            toast.success('Payment successful! 🎉')
+            dispatch(setCurrentRide(res.data.data))
+          } else {
+            toast.error('Payment verification failed')
+          }
         } catch { toast.error('Payment verification failed') }
       },
       prefill: { name: 'HeyTaxi Rider', email: '' },
@@ -329,12 +323,36 @@ export default function RiderBooking() {
     } catch { toast.error('Failed to submit rating') }
   }
 
+  const resetBooking = () => {
+    setStep('location')
+    setPickup({ address: '', lat: null, lng: null })
+    setDrop({ address: '', lat: null, lng: null })
+    setDistance(null)
+    setSelectedType(null)
+    setRating(0)
+    setFeedback('')
+    setRated(false)
+    autocompleteInitialized.current = false
+  }
+
   const STATUS = {
     REQUESTED:       { label: 'Looking for drivers...', icon: '🔍', color: 'text-amber-400', desc: 'Please wait while we find a driver near you' },
     ACCEPTED:        { label: 'Driver assigned!', icon: '✅', color: 'text-emerald-400', desc: 'Share your OTP when driver arrives.' },
     DRIVER_ARRIVING: { label: 'Driver is arriving', icon: '🏃', color: 'text-blue-400', desc: 'Your driver is almost there!' },
     ONGOING:         { label: 'Ride in progress', icon: '🚖', color: 'text-primary-400', desc: 'Sit back and enjoy the ride!' },
     COMPLETED:       { label: 'Ride completed!', icon: '🎉', color: 'text-emerald-400', desc: '' },
+  }
+
+  // ─── LOADING ──────────────────────────────────────────────────────────────
+  if (step === 'loading') {
+    return (
+      <div className="flex items-center justify-center min-h-40 p-6">
+        <div className="text-center">
+          <div className="w-10 h-10 border-2 border-white/20 border-t-primary-400 rounded-full animate-spin mx-auto mb-3" />
+          <div className="text-gray-400 text-sm">Checking ride status...</div>
+        </div>
+      </div>
+    )
   }
 
   // ─── COMPLETED ────────────────────────────────────────────────────────────
@@ -352,15 +370,19 @@ export default function RiderBooking() {
           <div className="space-y-3">
             <div className="flex justify-between text-sm"><span className="text-gray-400">📍 Pickup</span><span className="text-right max-w-[60%] text-xs">{currentRide.pickupAddress}</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-400">🏁 Drop</span><span className="text-right max-w-[60%] text-xs">{currentRide.dropAddress}</span></div>
-            <div className="flex justify-between text-sm"><span className="text-gray-400">📏 Distance</span><span>{currentRide.distanceKm?.toFixed(1)} km</span></div>
+            <div className="flex justify-between text-sm"><span className="text-gray-400">📏 Distance</span><span>{Number(currentRide.distanceKm).toFixed(1)} km</span></div>
             <div className="flex justify-between text-sm"><span className="text-gray-400">⏱️ Duration</span><span>{currentRide.durationMinutes} min</span></div>
             <div className="border-t border-white/10 pt-3">
-              <div className="flex justify-between font-bold text-lg"><span>Total Fare</span><span className="text-primary-400">₹{currentRide.actualFare}</span></div>
+              <div className="flex justify-between font-bold text-lg"><span>Total Fare</span><span className="text-primary-400">₹{currentRide.actualFare || currentRide.estimatedFare}</span></div>
               <div className="flex justify-between text-xs text-gray-500 mt-1"><span>Platform fee</span><span>₹{currentRide.commissionAmount}</span></div>
             </div>
           </div>
         </div>
-        {needsPayment && <button onClick={handleRazorpayPayment} className="btn-primary w-full mb-4">💳 Pay ₹{currentRide.actualFare} via Razorpay</button>}
+        {needsPayment && (
+          <button onClick={handleRazorpayPayment} className="btn-primary w-full mb-4">
+            💳 Pay ₹{currentRide.actualFare || currentRide.estimatedFare} via Razorpay
+          </button>
+        )}
         {currentRide.paymentStatus === 'COMPLETED' && (
           <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-3 mb-4 text-center">
             <span className="text-emerald-400 text-sm font-medium">✅ Payment Completed</span>
@@ -380,8 +402,7 @@ export default function RiderBooking() {
             <span className="text-emerald-400 text-sm">⭐ Thanks for rating!</span>
           </div>
         )}
-        <button onClick={() => { setStep('location'); setPickup({ address: '', lat: null, lng: null }); setDrop({ address: '', lat: null, lng: null }); setDistance(null); setSelectedType(null) }}
-          className="w-full py-3 rounded-2xl border border-white/10 text-gray-300 hover:border-white/30 transition-all">
+        <button onClick={resetBooking} className="w-full py-3 rounded-2xl border border-white/10 text-gray-300 hover:border-white/30 transition-all">
           Book Another Ride
         </button>
       </div>
@@ -402,7 +423,7 @@ export default function RiderBooking() {
           </div>
         </div>
         <div className="card mb-4">
-          {currentRide.rideOtp && ['ACCEPTED', 'DRIVER_ARRIVING'].includes(currentRide.status) && (
+          {currentRide.rideOtp && ['REQUESTED', 'ACCEPTED', 'DRIVER_ARRIVING'].includes(currentRide.status) && (
             <div className="bg-primary-400/10 border border-primary-400/30 rounded-2xl p-4 mb-4 text-center">
               <div className="text-xs text-primary-400 font-semibold mb-1 uppercase tracking-wider">🔐 Share this OTP with your driver</div>
               <div className="text-4xl font-bold tracking-[0.5em] text-white">{currentRide.rideOtp}</div>
@@ -435,6 +456,11 @@ export default function RiderBooking() {
         )}
       </div>
     )
+  }
+
+  // If we have tracking step but ride is gone/cancelled, reset to location
+  if (step === 'tracking' && !currentRide) {
+    setStep('location')
   }
 
   // ─── BOOKING ──────────────────────────────────────────────────────────────
