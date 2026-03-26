@@ -5,10 +5,12 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.cloud.openfeign.FallbackFactory;
+import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-@FeignClient(name = "notification-service", fallback = NotificationClient.NotificationFallback.class)
+@FeignClient(name = "notification-service", fallbackFactory = NotificationClient.NotificationFallbackFactory.class)
 public interface NotificationClient {
 
     @PostMapping("/api/notifications/ride-accepted")
@@ -33,16 +35,23 @@ public interface NotificationClient {
         private String rideRef;
     }
 
+    @Component
     @Slf4j
-    class NotificationFallback implements NotificationClient {
+    class NotificationFallbackFactory implements FallbackFactory<NotificationClient> {
         @Override
-        public void sendRideAccepted(RideAcceptedRequest request) {
-            log.warn("Notification service unavailable — ride accepted notification skipped");
-        }
+        public NotificationClient create(Throwable cause) {
+            log.warn("[NotificationClient fallback] Reason: {}", cause.getMessage());
+            return new NotificationClient() {
+                @Override
+                public void sendRideAccepted(RideAcceptedRequest request) {
+                    log.warn("[NotificationClient fallback] ride-accepted notification skipped");
+                }
 
-        @Override
-        public void sendRideCompleted(RideCompletedRequest request) {
-            log.warn("Notification service unavailable — ride completed notification skipped");
+                @Override
+                public void sendRideCompleted(RideCompletedRequest request) {
+                    log.warn("[NotificationClient fallback] ride-completed notification skipped");
+                }
+            };
         }
     }
 }

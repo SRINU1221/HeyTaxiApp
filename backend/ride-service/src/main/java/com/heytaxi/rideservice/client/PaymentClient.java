@@ -1,13 +1,16 @@
 package com.heytaxi.rideservice.client;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.cloud.openfeign.FallbackFactory;
+import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
 import java.math.BigDecimal;
 import java.util.Map;
 
-@FeignClient(name = "payment-service", fallback = PaymentClient.PaymentClientFallback.class)
+@FeignClient(name = "payment-service", fallbackFactory = PaymentClient.PaymentClientFallbackFactory.class)
 public interface PaymentClient {
 
     @PostMapping("/api/payments/create")
@@ -21,11 +24,16 @@ public interface PaymentClient {
         String paymentMethod
     ) {}
 
-    // Fallback - if payment service is down, ride still completes
-    class PaymentClientFallback implements PaymentClient {
+    @Component
+    @Slf4j
+    class PaymentClientFallbackFactory implements FallbackFactory<PaymentClient> {
         @Override
-        public Map<String, Object> createPayment(CreatePaymentRequest request) {
-            return Map.of("success", false, "message", "Payment service unavailable");
+        public PaymentClient create(Throwable cause) {
+            log.warn("[PaymentClient fallback] Reason: {}", cause.getMessage());
+            return request -> {
+                log.warn("[PaymentClient fallback] createPayment skipped for ride {}", request.rideId());
+                return Map.of("success", false, "message", "Payment service unavailable");
+            };
         }
     }
 }

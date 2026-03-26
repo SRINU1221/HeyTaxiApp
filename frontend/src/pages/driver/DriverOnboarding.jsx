@@ -28,7 +28,7 @@ export default function DriverOnboarding() {
     setLoading(true)
     try {
       await api.post('/drivers/register', { ...form, vehicleNumber: form.vehicleNumber.toUpperCase() })
-      toast.success('Vehicle registered! Awaiting admin verification 🎉')
+      toast.success('Vehicle registered! You can now go online and accept rides 🎉')
       navigate('/driver')
     } catch (err) {
       toast.error(err.response?.data?.message || 'Registration failed')
@@ -83,9 +83,9 @@ export default function DriverOnboarding() {
             placeholder="e.g., TN0120230012345" required className="input-field font-mono" />
         </div>
 
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4">
-          <p className="text-amber-400 text-sm font-medium mb-1">📋 Verification Process</p>
-          <p className="text-gray-400 text-xs">After registration, our team will verify your details within 24 hours. You'll be notified by email once approved.</p>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
+          <p className="text-emerald-400 text-sm font-medium mb-1">✅ Instant Activation</p>
+          <p className="text-gray-400 text-xs">Your account will be activated immediately after registration. You can start accepting rides right away!</p>
         </div>
 
         <button type="submit" disabled={loading} className="btn-primary w-full py-4">

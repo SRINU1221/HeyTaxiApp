@@ -34,9 +34,8 @@ export const verifyOtp = createAsyncThunk('auth/verifyOtp', async (data, { rejec
   try {
     const res = await api.post('/auth/verify-otp', data)
     if (res.data.success) {
-      const { accessToken, refreshToken, user } = res.data.data
+      const { accessToken, user } = res.data.data
       localStorage.setItem('accessToken', accessToken)
-      localStorage.setItem('refreshToken', refreshToken)
       localStorage.setItem('user', JSON.stringify(user))
       localStorage.setItem('role', user?.role || '')
       localStorage.setItem('name', user?.name || '')

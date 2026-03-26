@@ -3,6 +3,7 @@ package com.heytaxi.rideservice.service;
 import com.heytaxi.rideservice.client.NotificationClient;
 import com.heytaxi.rideservice.client.PaymentClient;
 import com.heytaxi.rideservice.client.RazorpayClient;
+import com.heytaxi.rideservice.client.DriverClient;
 import com.heytaxi.rideservice.dto.RideDto;
 import com.heytaxi.rideservice.entity.Ride;
 import com.heytaxi.rideservice.repository.RideRepository;
@@ -26,6 +27,7 @@ public class RideService {
     private final PaymentClient paymentClient;
     private final NotificationClient notificationClient;
     private final RazorpayClient razorpayClient;
+    private final DriverClient driverClient;
     private final RedisTemplate<String, String> redisTemplate;
 
     private static final BigDecimal COMMISSION = new BigDecimal("2.00"); // ₹2 fixed HeyTaxi fee
@@ -235,6 +237,13 @@ public class RideService {
             log.warn("Failed to create payment record for ride {}: {}", rideId, e.getMessage());
         }
 
+        // Update driver stats
+        try {
+            driverClient.updateStats(driverId, driverEarnings);
+        } catch (Exception e) {
+            log.warn("Failed to update driver stats for driver {}: {}", driverId, e.getMessage());
+        }
+
         return toRideResponse(saved, false);
     }
 
@@ -389,7 +398,7 @@ public class RideService {
     }
 
     private RideDto.RideResponse toRideResponse(Ride ride, boolean showOtp) {
-        return RideDto.RideResponse.builder()
+        RideDto.RideResponse response = RideDto.RideResponse.builder()
                 .id(ride.getId())
                 .riderId(ride.getRiderId())
                 .driverId(ride.getDriverId())
@@ -418,5 +427,23 @@ public class RideService {
                 .driverRating(ride.getDriverRating())
                 .riderFeedback(ride.getRiderFeedback())
                 .build();
+
+        // ✅ Fetch driver's live location for active rides if the driverId is present
+        if (ride.getDriverId() != null && 
+            (ride.getStatus() == Ride.RideStatus.ACCEPTED || 
+             ride.getStatus() == Ride.RideStatus.DRIVER_ARRIVING || 
+             ride.getStatus() == Ride.RideStatus.ONGOING)) {
+            try {
+                java.util.Map<String, Double> loc = driverClient.getDriverLocation(ride.getDriverId());
+                if (loc != null && !loc.isEmpty()) {
+                    response.setDriverLatitude(loc.get("lat"));
+                    response.setDriverLongitude(loc.get("lng"));
+                }
+            } catch (Exception e) {
+                log.warn("Failed to fetch driver {} location for ride {}: {}", ride.getDriverId(), ride.getId(), e.getMessage());
+            }
+        }
+        
+        return response;
     }
 }

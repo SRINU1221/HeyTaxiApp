@@ -8,7 +8,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/drivers")
@@ -57,6 +60,30 @@ public class DriverController {
             @RequestParam Driver.VehicleType vehicleType) {
         return ResponseEntity.ok(DriverDto.ApiResponse.success("Nearby drivers",
                 driverService.getNearbyDrivers(lat, lng, vehicleType)));
+    }
+
+    // Internal endpoint for ride-service to update driver stats
+    @PostMapping("/internal/{userId}/stats")
+    public ResponseEntity<Void> updateStats(@PathVariable Long userId, @RequestParam BigDecimal earnings) {
+        driverService.updateDriverStats(userId, earnings);
+        return ResponseEntity.ok().build();
+    }
+
+    // Internal endpoint for ride-service to get driver's current location (for live tracking)
+    @GetMapping("/internal/{userId}/location")
+    public ResponseEntity<Map<String, Double>> getDriverLocation(@PathVariable Long userId) {
+        try {
+            var profile = driverService.getDriverProfile(userId);
+            if (profile.getCurrentLatitude() == null || profile.getCurrentLongitude() == null) {
+                return ResponseEntity.ok(Map.of());
+            }
+            Map<String, Double> loc = new HashMap<>();
+            loc.put("lat", profile.getCurrentLatitude());
+            loc.put("lng", profile.getCurrentLongitude());
+            return ResponseEntity.ok(loc);
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of());
+        }
     }
 
     // Admin endpoints
