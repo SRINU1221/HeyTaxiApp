@@ -142,7 +142,7 @@ export default function DriverDashboard() {
 
           // Send to backend
           try {
-            await api.patch('/drivers/location', { lat, lng })
+            await api.patch('/drivers/location', { latitude: lat, longitude: lng })
           } catch (err) {
             console.warn('[Driver] Failed to update location:', err)
           }

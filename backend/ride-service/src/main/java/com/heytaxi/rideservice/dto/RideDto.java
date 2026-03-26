@@ -93,6 +93,9 @@ public class RideDto {
         private LocalDateTime completedAt;
         private Double driverRating;
         private String riderFeedback;
+        // Driver's current live location (populated when ride is active)
+        private Double driverLatitude;
+        private Double driverLongitude;
     }
 
     @Data @Builder @NoArgsConstructor @AllArgsConstructor

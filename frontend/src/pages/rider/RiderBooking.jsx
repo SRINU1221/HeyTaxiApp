@@ -60,6 +60,7 @@ export default function RiderBooking() {
   const [selectedType, setSelectedType] = useState(null)
   const [paymentMethod, setPaymentMethod] = useState('CASH')
   const [distance, setDistance] = useState(null)
+  const [nearbyDrivers, setNearbyDrivers] = useState([])
   const [rating, setRating] = useState(0)
   const [feedback, setFeedback] = useState('')
   const [rated, setRated] = useState(false)
@@ -69,6 +70,9 @@ export default function RiderBooking() {
   const mapInstanceRef = useRef(null)
   const pickupMarkerRef = useRef(null)
   const dropMarkerRef = useRef(null)
+  const driverMarkerRef = useRef(null)
+  const nearbyMarkersRef = useRef({})
+  const directionsRendererRef = useRef(null)
   const pickupInputRef = useRef(null)
   const dropInputRef = useRef(null)
   const pollingRef = useRef(null)
@@ -142,6 +146,7 @@ export default function RiderBooking() {
           mapInstanceRef.current.setZoom(15)
           placeMarker(pickupMarkerRef, { lat, lng }, '📍')
         }
+        fetchNearbyDrivers(lat, lng)
       })
     }
 
@@ -161,6 +166,44 @@ export default function RiderBooking() {
     }
   }, [mapLoaded, step])
 
+  // ─── Fetch nearby drivers for booking map ────────────────────────────────
+  const fetchNearbyDrivers = async (lat, lng) => {
+    try {
+      const res = await api.get(`/drivers/nearby?lat=${lat}&lng=${lng}`)
+      if (res.data.success) {
+        setNearbyDrivers(res.data.data || [])
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Draw nearby drivers on location step
+  useEffect(() => {
+    if (step !== 'location' || !mapInstanceRef.current || !window.google) return
+    
+    // Clear old markers
+    Object.values(nearbyMarkersRef.current).forEach(m => m.setMap(null))
+    nearbyMarkersRef.current = {}
+
+    nearbyDrivers.forEach(driver => {
+      if (!driver.currentLatitude || !driver.currentLongitude) return
+      const emoji = driver.vehicleType === 'BIKE' ? '🏍️' : driver.vehicleType === 'AUTO' ? '🛺' : '🚗'
+      
+      const marker = new window.google.maps.Marker({
+        position: { lat: driver.currentLatitude, lng: driver.currentLongitude },
+        map: mapInstanceRef.current,
+        icon: {
+          url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><text y="24" font-size="20">${emoji}</text></svg>`
+          )}`,
+          scaledSize: new window.google.maps.Size(30, 30),
+        },
+      })
+      nearbyMarkersRef.current[driver.id] = marker
+    })
+  }, [nearbyDrivers, step])
+
   // ─── Draw route when both locations set ───────────────────────────────────
   useEffect(() => {
     if (!pickup.lat || !drop.lat || !window.google) return
@@ -174,18 +217,20 @@ export default function RiderBooking() {
     })
 
     if (mapInstanceRef.current) {
-      const renderer = new window.google.maps.DirectionsRenderer({
-        map: mapInstanceRef.current,
-        suppressMarkers: true,
-        polylineOptions: { strokeColor: '#FF6B35', strokeWeight: 4 },
-      })
+      if (!directionsRendererRef.current) {
+        directionsRendererRef.current = new window.google.maps.DirectionsRenderer({
+          map: mapInstanceRef.current,
+          suppressMarkers: true,
+          polylineOptions: { strokeColor: '#FF6B35', strokeWeight: 4 },
+        })
+      }
       new window.google.maps.DirectionsService().route({
         origin: { lat: pickup.lat, lng: pickup.lng },
         destination: { lat: drop.lat, lng: drop.lng },
         travelMode: 'DRIVING',
       }, (result, status) => {
         if (status === 'OK') {
-          renderer.setDirections(result)
+          directionsRendererRef.current.setDirections(result)
           const bounds = new window.google.maps.LatLngBounds()
           bounds.extend({ lat: pickup.lat, lng: pickup.lng })
           bounds.extend({ lat: drop.lat, lng: drop.lng })
@@ -194,6 +239,74 @@ export default function RiderBooking() {
       })
     }
   }, [pickup.lat, drop.lat])
+
+  // ─── Draw route and driver marker on tracking map ────────────────────────
+  useEffect(() => {
+    if (step !== 'tracking' || !currentRide || !mapInstanceRef.current || !window.google) return
+
+    const { status, pickupLatitude, pickupLongitude, dropLatitude, dropLongitude, driverLatitude, driverLongitude } = currentRide
+    
+    // Draw driver marker
+    if (driverLatitude && driverLongitude) {
+      const emoji = currentRide.vehicleType === 'BIKE' ? '🏍️' : currentRide.vehicleType === 'AUTO' ? '🛺' : '🚗'
+      if (!driverMarkerRef.current) {
+        driverMarkerRef.current = new window.google.maps.Marker({
+          position: { lat: driverLatitude, lng: driverLongitude },
+          map: mapInstanceRef.current,
+          icon: {
+            url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+              `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><text y="32" font-size="28">${emoji}</text></svg>`
+            )}`,
+            scaledSize: new window.google.maps.Size(40, 40),
+          },
+        })
+      } else {
+        // Simple animate to new position
+        driverMarkerRef.current.setPosition({ lat: driverLatitude, lng: driverLongitude })
+      }
+    }
+
+    // Draw Route
+    if (!pickupLatitude || !dropLatitude) return
+    if (!directionsRendererRef.current) {
+      directionsRendererRef.current = new window.google.maps.DirectionsRenderer({
+        map: mapInstanceRef.current,
+        suppressMarkers: true,
+        polylineOptions: { strokeColor: '#FF6B35', strokeWeight: 4 },
+      })
+    }
+
+    let origin, destination
+    if (status === 'ACCEPTED' || status === 'DRIVER_ARRIVING') {
+      if (!driverLatitude) return // Wait for driver location
+      origin = { lat: driverLatitude, lng: driverLongitude }
+      destination = { lat: pickupLatitude, lng: pickupLongitude }
+      placeMarker(pickupMarkerRef, destination, '📍')
+      if (dropMarkerRef.current) dropMarkerRef.current.setMap(null)
+    } else if (status === 'ONGOING') {
+      origin = { lat: pickupLatitude, lng: pickupLongitude }
+      destination = { lat: dropLatitude, lng: dropLongitude }
+      placeMarker(pickupMarkerRef, origin, '📍')
+      placeMarker(dropMarkerRef, destination, '🏁')
+    } else {
+      return
+    }
+
+    new window.google.maps.DirectionsService().route({
+      origin, destination, travelMode: 'DRIVING'
+    }, (result, dsStatus) => {
+      if (dsStatus === 'OK') {
+        directionsRendererRef.current.setDirections(result)
+        
+        // Auto fit bounds
+        const bounds = new window.google.maps.LatLngBounds()
+        bounds.extend(origin)
+        bounds.extend(destination)
+        mapInstanceRef.current.fitBounds(bounds)
+      }
+    })
+    
+  }, [currentRide, step, mapLoaded])
 
   // ─── Polling for ride status updates ──────────────────────────────────────
   const startPolling = useCallback(() => {
@@ -413,16 +526,27 @@ export default function RiderBooking() {
   if (step === 'tracking' && currentRide && !['COMPLETED', 'CANCELLED'].includes(currentRide.status)) {
     const status = STATUS[currentRide.status] || STATUS.REQUESTED
     return (
-      <div className="p-6 max-w-lg mx-auto animate-fade-in">
-        <h1 className="text-2xl font-display font-bold mb-4">Live Tracking</h1>
-        <div className="rounded-3xl overflow-hidden mb-4 border border-white/5 bg-dark-800 flex items-center justify-center" style={{ height: 220 }}>
-          <div className="text-center p-6">
-            <div className="text-5xl mb-3 animate-bounce">{status.icon}</div>
-            <div className={`font-bold text-lg ${status.color}`}>{status.label}</div>
-            <div className="text-gray-400 text-sm mt-1">{status.desc}</div>
-          </div>
+      <div className="p-6 max-w-lg mx-auto animate-fade-in flex flex-col h-[calc(100vh-80px)]">
+        <h1 className="text-2xl font-display font-bold mb-4 shrink-0">Live Tracking</h1>
+        
+        {/* Live Map */}
+        <div className="rounded-3xl overflow-hidden mb-4 border border-white/5 bg-dark-800 shrink-0" style={{ height: '35vh', minHeight: '220px' }}>
+          {mapLoaded ? (
+            <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+          ) : (
+            <div className="flex items-center justify-center h-full text-gray-500">Loading map...</div>
+          )}
         </div>
-        <div className="card mb-4">
+        
+        <div className="card mb-4 shrink-0">
+          <div className="flex items-center gap-4 mb-4">
+            <div className={`text-4xl ${status.color}`}>{status.icon}</div>
+            <div>
+              <div className={`font-bold text-lg ${status.color}`}>{status.label}</div>
+              <div className="text-gray-400 text-sm leading-tight">{status.desc}</div>
+            </div>
+          </div>
+
           {currentRide.rideOtp && ['REQUESTED', 'ACCEPTED', 'DRIVER_ARRIVING'].includes(currentRide.status) && (
             <div className="bg-primary-400/10 border border-primary-400/30 rounded-2xl p-4 mb-4 text-center">
               <div className="text-xs text-primary-400 font-semibold mb-1 uppercase tracking-wider">🔐 Share this OTP with your driver</div>
