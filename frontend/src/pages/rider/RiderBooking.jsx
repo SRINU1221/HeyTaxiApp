@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { requestRide, cancelRide, getCurrentRide, setCurrentRide } from '../../store/slices/rideSlice'
 import toast from 'react-hot-toast'
 import api from '../../services/api'
+import useRideWebSocket from '../../hooks/useRideWebSocket'
 
 const VEHICLES = [
   { type: 'BIKE', icon: '🏍️', label: 'HeyBike', desc: 'Fastest & cheapest', baseKm: 8, base: 20, eta: '3-5 min' },
@@ -65,6 +66,19 @@ export default function RiderBooking() {
   const [feedback, setFeedback] = useState('')
   const [rated, setRated] = useState(false)
   const [mapLoaded, setMapLoaded] = useState(false)
+
+  // ✅ WebSocket — handles real-time updates instead of waiting for polling
+  const handleWsRideUpdate = useCallback((eventType, data) => {
+    if (eventType === 'RIDE_ACCEPTED' || eventType === 'RIDE_REQUESTED') {
+      setStep('tracking')
+    } else if (eventType === 'RIDE_COMPLETED') {
+      setStep('completed')
+    } else if (eventType === 'RIDE_CANCELLED' || eventType === 'NO_DRIVER_FOUND') {
+      setStep('location')
+    }
+  }, [])
+
+  useRideWebSocket(handleWsRideUpdate)
 
   const mapRef = useRef(null)
   const mapInstanceRef = useRef(null)
@@ -656,8 +670,12 @@ export default function RiderBooking() {
           </div>
           <div className="card mb-4">
             <h3 className="font-semibold text-sm text-gray-400 mb-3">Payment Method</h3>
-            <div className="grid grid-cols-2 gap-3">
-              {[{ value: 'CASH', icon: '💵', label: 'Cash' }, { value: 'RAZORPAY', icon: '💳', label: 'Online' }].map(m => (
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { value: 'CASH',     icon: '💵', label: 'Cash' },
+                { value: 'UPI',      icon: '📱', label: 'UPI' },
+                { value: 'RAZORPAY', icon: '💳', label: 'Card' },
+              ].map(m => (
                 <button key={m.value} onClick={() => setPaymentMethod(m.value)}
                   className={`p-3 rounded-2xl border-2 flex items-center gap-2 transition-all ${
                     paymentMethod === m.value ? 'border-primary-400 bg-primary-400/10' : 'border-white/10 bg-dark-700 hover:border-white/20'

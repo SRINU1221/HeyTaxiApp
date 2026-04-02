@@ -77,7 +77,7 @@ public class RideDto {
         private Double dropLongitude;
         private Ride.VehicleType vehicleType;
         private Ride.RideStatus status;
-        private String rideOtp;           // shown to rider after ACCEPTED
+        private String rideOtp;           // shown to rider only
         private BigDecimal estimatedFare;
         private BigDecimal actualFare;
         private BigDecimal commissionAmount;
@@ -86,9 +86,10 @@ public class RideDto {
         private Integer durationMinutes;
         private Ride.PaymentMethod paymentMethod;
         private Ride.PaymentStatus paymentStatus;
-        private String razorpayOrderId;   // returned when payment method is RAZORPAY
+        private String razorpayOrderId;
         private LocalDateTime requestedAt;
         private LocalDateTime acceptedAt;
+        private LocalDateTime arrivedAt;    // ✅ NEW
         private LocalDateTime startedAt;
         private LocalDateTime completedAt;
         private Double driverRating;

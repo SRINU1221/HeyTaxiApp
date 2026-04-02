@@ -21,6 +21,11 @@ public class Ride {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // ✅ Optimistic locking — prevents race conditions on concurrent updates
+    @Version
+    @Column(name = "version")
+    private Long version;
+
     @Column(name = "rider_id", nullable = false)
     private Long riderId;
 
@@ -104,6 +109,10 @@ public class Ride {
     @Column(name = "accepted_at")
     private LocalDateTime acceptedAt;
 
+    // ✅ NEW: when driver marks arrived at pickup
+    @Column(name = "arrived_at")
+    private LocalDateTime arrivedAt;
+
     @Column(name = "started_at")
     private LocalDateTime startedAt;
 
@@ -136,8 +145,9 @@ public class Ride {
 
     public enum RideStatus {
         REQUESTED,       // Rider requested, waiting for driver
-        ACCEPTED,        // Driver accepted
-        DRIVER_ARRIVING, // Driver on the way to pickup
+        ACCEPTED,        // Driver accepted, heading to pickup
+        DRIVER_ARRIVING, // Driver on the way / arrived at pickup (kept for backward compat)
+        ARRIVED,         // ✅ NEW: Driver physically at pickup location
         ONGOING,         // OTP verified, ride in progress
         COMPLETED,       // Ride done
         CANCELLED        // Cancelled by rider or driver
@@ -148,7 +158,7 @@ public class Ride {
     }
 
     public enum PaymentMethod {
-        CASH, RAZORPAY
+        CASH, RAZORPAY, UPI  // ✅ Added UPI
     }
 
     public enum PaymentStatus {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSelector } from 'react-redux'
 import toast from 'react-hot-toast'
 import api from '../../services/api'
+import useDriverWebSocket from '../../hooks/useDriverWebSocket'
 
 const GOOGLE_MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY || ''
 
@@ -12,12 +13,14 @@ export default function DriverDashboard() {
   const [availableRides, setAvailableRides] = useState([])
   const [currentRide, setCurrentRide] = useState(null)
   const [vehicleType, setVehicleType] = useState(null)
+  const [driverId, setDriverId] = useState(null)
   const [otp, setOtp] = useState('')
   const [loading, setLoading] = useState(false)
   const [mapLoaded, setMapLoaded] = useState(false)
   const [todayStats, setTodayStats] = useState({ rides: 0, earnings: 0 })
   const [initDone, setInitDone] = useState(false)
   const [currentLocation, setCurrentLocation] = useState(null)
+  const [newRideAlert, setNewRideAlert] = useState(false) // blinking badge
 
   const mapRef = useRef(null)
   const mapInstanceRef = useRef(null)
@@ -37,6 +40,7 @@ export default function DriverDashboard() {
           const data = res.data.data
           const vt = data?.vehicleType || data?.vehicle?.vehicleType
           if (vt) { setVehicleType(vt); vehicleTypeRef.current = vt }
+          if (data?.id) setDriverId(data.id)
         }
       } catch (err) {
         console.warn('[Driver] profile fetch failed:', err.message)
@@ -46,6 +50,34 @@ export default function DriverDashboard() {
     }
     fetchProfile()
   }, [])
+
+  // ─── WebSocket: receive real-time ride requests + events ──────────────────
+  const handleNewRide = useCallback((ride) => {
+    // Only add if not already in the list
+    setAvailableRides(prev => {
+      if (prev.find(r => r.id === ride.id)) return prev
+      setNewRideAlert(true)
+      setTimeout(() => setNewRideAlert(false), 5000) // clear alert after 5s
+      return [ride, ...prev]
+    })
+  }, [])
+
+  const handleRideEvent = useCallback((eventType, data) => {
+    if (eventType === 'RIDE_CANCELLED' && currentRide?.id === data?.id) {
+      setCurrentRide(null)
+      toast.error('❌ Rider cancelled the ride')
+      setAvailableRides([])
+      fetchAvailableRides()
+    }
+  }, [currentRide?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useDriverWebSocket({
+    isOnline,
+    driverId,
+    vehicleType,
+    onNewRide: handleNewRide,
+    onRideEvent: handleRideEvent,
+  })
 
   // ─── Load Google Maps ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -93,7 +125,6 @@ export default function DriverDashboard() {
         polylineOptions: { strokeColor: '#FF6B35', strokeWeight: 4 },
       })
     }
-    // Prevent duplicate routing calls if same coords
     new window.google.maps.DirectionsService().route({
       origin: { lat: startLat, lng: startLng },
       destination: { lat: endLat, lng: endLng },
@@ -106,19 +137,12 @@ export default function DriverDashboard() {
   // ─── Update Map Route based on Ride Status ─────────────────────────────────
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || !currentRide) {
-      if (directionsRendererRef.current) {
-        directionsRendererRef.current.setDirections({ routes: [] })
-      }
+      if (directionsRendererRef.current) directionsRendererRef.current.setDirections({ routes: [] })
       return
     }
-
     if (currentRide.status === 'ACCEPTED' || currentRide.status === 'DRIVER_ARRIVING') {
-      // Driver to Pickup
-      if (currentLocation) {
-        showRouteOnMap(currentLocation.lat, currentLocation.lng, currentRide.pickupLatitude, currentRide.pickupLongitude)
-      }
+      if (currentLocation) showRouteOnMap(currentLocation.lat, currentLocation.lng, currentRide.pickupLatitude, currentRide.pickupLongitude)
     } else if (currentRide.status === 'ONGOING') {
-      // Pickup to Drop
       showRouteOnMap(currentRide.pickupLatitude, currentRide.pickupLongitude, currentRide.dropLatitude, currentRide.dropLongitude)
     }
   }, [mapLoaded, currentRide, currentLocation, showRouteOnMap])
@@ -132,30 +156,21 @@ export default function DriverDashboard() {
       }
       return
     }
-
     if ('geolocation' in navigator) {
       locationWatchId.current = navigator.geolocation.watchPosition(
         async (position) => {
           const lat = position.coords.latitude
           const lng = position.coords.longitude
           setCurrentLocation({ lat, lng })
-
-          // Send to backend
-          try {
-            await api.patch('/drivers/location', { latitude: lat, longitude: lng })
-          } catch (err) {
-            console.warn('[Driver] Failed to update location:', err)
-          }
+          try { await api.patch('/drivers/location', { latitude: lat, longitude: lng }) }
+          catch (err) { console.warn('[Driver] Failed to update location:', err) }
         },
         (error) => console.log('Geolocation error:', error),
         { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
       )
     }
-
     return () => {
-      if (locationWatchId.current !== null) {
-        navigator.geolocation.clearWatch(locationWatchId.current)
-      }
+      if (locationWatchId.current !== null) navigator.geolocation.clearWatch(locationWatchId.current)
     }
   }, [isOnline])
 
@@ -187,14 +202,14 @@ export default function DriverDashboard() {
     }
   }, [])
 
-  // ─── Polling ───────────────────────────────────────────────────────────────
+  // ─── Polling (fallback when WebSocket not available) ───────────────────────
   useEffect(() => {
     if (isOnline) {
       fetchCurrentRide().then(hasRide => { if (!hasRide) fetchAvailableRides() })
       pollingRef.current = setInterval(async () => {
         const hasRide = await fetchCurrentRide()
         if (!hasRide) await fetchAvailableRides()
-      }, 5000)
+      }, 8000) // 8s fallback — WebSocket handles real-time
     } else {
       if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
       setAvailableRides([])
@@ -221,14 +236,13 @@ export default function DriverDashboard() {
 
   const handleAccept = async (rideId) => {
     setLoading(true)
+    setNewRideAlert(false)
     try {
       const res = await api.post(`/rides/${rideId}/accept`)
       if (res.data.success) {
-        const ride = res.data.data
-        setCurrentRide(ride)
+        setCurrentRide(res.data.data)
         setAvailableRides([])
         toast.success('Ride accepted! Head to pickup location 🚖')
-        // Map updates automatically via the useEffect
       }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept — ride may be taken!')
@@ -287,9 +301,11 @@ export default function DriverDashboard() {
 
   const vehicleIcon = (type) => type === 'BIKE' ? '🏍️' : type === 'AUTO' ? '🛺' : '🚗'
 
-  // ─── Determine whether to show OTP entry ──────────────────────────────────
-  // Show OTP entry if ACCEPTED (driver can go straight to OTP) OR DRIVER_ARRIVING
-  const showOtpEntry = currentRide && (currentRide.status === 'ACCEPTED' || currentRide.status === 'DRIVER_ARRIVING')
+  const paymentIcon = (method) => {
+    if (method === 'CASH') return '💵'
+    if (method === 'UPI') return '📱'
+    return '💳'
+  }
 
   return (
     <div className="p-6 max-w-lg mx-auto">
@@ -303,9 +319,15 @@ export default function DriverDashboard() {
             {vehicleType && <span className="ml-2 text-xs text-primary-400">{vehicleIcon(vehicleType)} {vehicleType}</span>}
           </p>
         </div>
-        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${isOnline ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-gray-500/10 border-gray-500/30 text-gray-400'
-          }`}>
+        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold border relative ${isOnline
+          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+          : 'bg-gray-500/10 border-gray-500/30 text-gray-400'
+        }`}>
           {isOnline ? '🟢 Online' : '⚫ Offline'}
+          {/* ✅ Blinking badge for new ride alert */}
+          {newRideAlert && (
+            <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping" />
+          )}
         </div>
       </div>
 
@@ -341,7 +363,7 @@ export default function DriverDashboard() {
           className={`w-full py-4 rounded-2xl font-bold text-lg mb-6 transition-all ${isOnline
             ? 'bg-red-500/20 border-2 border-red-500/40 text-red-400 hover:bg-red-500/30'
             : 'btn-primary'
-            }`}>
+          }`}>
           {loading ? (
             <span className="flex items-center justify-center gap-2">
               <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -363,7 +385,7 @@ export default function DriverDashboard() {
             <div>
               <div className={`font-bold ${currentRide.status === 'ACCEPTED' ? 'text-amber-400' :
                 currentRide.status === 'DRIVER_ARRIVING' ? 'text-blue-400' : 'text-emerald-400'
-                }`}>
+              }`}>
                 {currentRide.status === 'ACCEPTED' ? 'Head to pickup location' :
                   currentRide.status === 'DRIVER_ARRIVING' ? 'At pickup — Enter OTP to start' :
                     currentRide.status === 'ONGOING' ? 'Ride in progress' : currentRide.status}
@@ -396,7 +418,7 @@ export default function DriverDashboard() {
               <div className="text-xs text-gray-400">Your Earnings</div>
             </div>
             <div className="text-center">
-              <div className="font-bold text-sm">{currentRide.paymentMethod}</div>
+              <div className="font-bold text-sm">{paymentIcon(currentRide.paymentMethod)} {currentRide.paymentMethod}</div>
               <div className="text-xs text-gray-400">Payment</div>
             </div>
           </div>
@@ -408,7 +430,6 @@ export default function DriverDashboard() {
                 className="w-full py-3 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 font-medium mb-3 hover:bg-amber-500/30 transition-all">
                 📍 I've Arrived at Pickup Location
               </button>
-              {/* Also allow direct OTP entry without marking arriving */}
               <div className="bg-dark-700 rounded-2xl p-4 mb-3">
                 <div className="text-sm font-medium text-gray-300 mb-3 text-center">🔢 Or enter OTP directly to start ride</div>
                 <div className="flex gap-2">
@@ -470,7 +491,7 @@ export default function DriverDashboard() {
             <h3 className="font-semibold text-gray-300">
               Available Rides
               {availableRides.length > 0 && (
-                <span className="ml-2 bg-primary-400 text-white text-xs px-2 py-0.5 rounded-full">
+                <span className={`ml-2 text-white text-xs px-2 py-0.5 rounded-full ${newRideAlert ? 'bg-red-500 animate-pulse' : 'bg-primary-400'}`}>
                   {availableRides.length}
                 </span>
               )}
@@ -481,11 +502,22 @@ export default function DriverDashboard() {
             </button>
           </div>
 
+          {/* ✅ New ride alert banner */}
+          {newRideAlert && (
+            <div className="bg-primary-400/10 border border-primary-400/30 rounded-2xl p-3 mb-3 flex items-center gap-3 animate-pulse">
+              <span className="text-2xl">🚨</span>
+              <div>
+                <div className="text-primary-400 font-semibold text-sm">New ride request!</div>
+                <div className="text-xs text-gray-400">Accept quickly before another driver takes it</div>
+              </div>
+            </div>
+          )}
+
           {availableRides.length === 0 ? (
             <div className="card text-center py-10">
               <div className="text-4xl mb-3 animate-pulse">🔍</div>
               <div className="text-gray-400 font-medium">Looking for ride requests...</div>
-              <div className="text-gray-500 text-sm mt-1">Auto-refreshes every 5 seconds</div>
+              <div className="text-gray-500 text-sm mt-1">Real-time via WebSocket • Polling every 8s</div>
               {vehicleType && (
                 <div className="mt-3 text-xs text-gray-600 bg-dark-700 rounded-xl px-3 py-2 inline-block">
                   Matching: {vehicleIcon(vehicleType)} {vehicleType} rides only
@@ -525,7 +557,7 @@ export default function DriverDashboard() {
                   </div>
 
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
-                    <span>💳 {ride.paymentMethod === 'CASH' ? 'Cash' : 'Online'}</span>
+                    <span>{paymentIcon(ride.paymentMethod)} {ride.paymentMethod === 'CASH' ? 'Cash' : ride.paymentMethod === 'UPI' ? 'UPI' : 'Online'}</span>
                     <span>📏 {Number(ride.distanceKm || 0).toFixed(1)} km</span>
                   </div>
 

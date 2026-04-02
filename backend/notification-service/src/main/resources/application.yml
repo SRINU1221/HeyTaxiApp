@@ -21,6 +21,10 @@ spring:
       pool:
         core-size: 5
         max-size: 20
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
 
 eureka:
   client:

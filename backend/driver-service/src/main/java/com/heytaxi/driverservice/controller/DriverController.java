@@ -54,22 +54,29 @@ public class DriverController {
                 driverService.updateLocation(userId, request)));
     }
 
+    /**
+     * Find nearby drivers.
+     * vehicleType is OPTIONAL — if not provided, returns all vehicle types.
+     * radiusKm defaults to 5km.
+     */
     @GetMapping("/nearby")
     public ResponseEntity<DriverDto.ApiResponse<List<DriverDto.DriverResponse>>> getNearby(
-            @RequestParam Double lat, @RequestParam Double lng,
-            @RequestParam Driver.VehicleType vehicleType) {
+            @RequestParam Double lat,
+            @RequestParam Double lng,
+            @RequestParam(required = false) Driver.VehicleType vehicleType,
+            @RequestParam(defaultValue = "5.0") double radiusKm) {
         return ResponseEntity.ok(DriverDto.ApiResponse.success("Nearby drivers",
-                driverService.getNearbyDrivers(lat, lng, vehicleType)));
+                driverService.getNearbyDrivers(lat, lng, vehicleType, radiusKm)));
     }
 
-    // Internal endpoint for ride-service to update driver stats
+    // ─── Internal endpoints (called by ride-service via Feign) ───────────────
+
     @PostMapping("/internal/{userId}/stats")
     public ResponseEntity<Void> updateStats(@PathVariable Long userId, @RequestParam BigDecimal earnings) {
         driverService.updateDriverStats(userId, earnings);
         return ResponseEntity.ok().build();
     }
 
-    // Internal endpoint for ride-service to get driver's current location (for live tracking)
     @GetMapping("/internal/{userId}/location")
     public ResponseEntity<Map<String, Double>> getDriverLocation(@PathVariable Long userId) {
         try {
@@ -86,7 +93,8 @@ public class DriverController {
         }
     }
 
-    // Admin endpoints
+    // ─── Admin endpoints ─────────────────────────────────────────────────────
+
     @GetMapping("/admin/all")
     public ResponseEntity<DriverDto.ApiResponse<List<DriverDto.DriverResponse>>> getAllDrivers(
             @RequestHeader("X-User-Role") String role) {
